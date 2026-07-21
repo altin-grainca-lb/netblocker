@@ -119,10 +119,6 @@ struct ContentView: View {
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
             Text("No apps yet").font(.callout).bold()
-            Text("Add an app to discover the servers it talks to, then block them.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
             Button("Add App…") { addApp() }
                 .controlSize(.small)
         }
