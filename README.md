@@ -35,6 +35,12 @@ tick the domains you want gone → they stop resolving, system-wide, via
   flush the DNS cache.
 - Use the row toggle to block/unblock, the pencil to change domains, the
   trash to remove (and unblock) an app.
+- **Launch at login** can be enabled with the checkbox at the bottom of the
+  popover (uses the system login-items mechanism, no daemons).
+- If a DNS proxy (NextDNS, AdGuard, Cloudflare WARP, …) is running, or a
+  blocked domain still resolves to a real address, NetBlocker shows a
+  warning banner — that's your signal the proxy is bypassing `/etc/hosts`
+  and the domains should go in the proxy's own denylist instead.
 
 ## How it works
 
@@ -60,7 +66,8 @@ extensions. The hosts file is the whole mechanism.
   list is fully in your control, so choose accordingly.
 - **DNS proxies bypass it.** If you run NextDNS, AdGuard, Cloudflare WARP or
   similar as a DNS proxy/VPN, they resolve names upstream without consulting
-  `/etc/hosts`. Add the domains to that tool's own denylist instead.
+  `/etc/hosts`. NetBlocker detects this and warns you in the popover; add
+  the domains to that tool's own denylist instead.
 - **Determined apps can evade it.** Hardcoded IPs or an app doing its own
   DNS-over-HTTPS won't be stopped by hosts entries. For that you need a real
   content-filter firewall ([LuLu](https://objective-see.org/products/lulu.html),

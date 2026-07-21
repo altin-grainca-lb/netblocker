@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ServiceManagement
 import UniformTypeIdentifiers
 
 struct ContentView: View {
@@ -8,6 +9,8 @@ struct ContentView: View {
     @State private var isScanning = false
     @State private var scanningName = ""
     @State private var pendingApp: PendingApp?
+    @State private var proxyStatus = DNSProxyStatus()
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     /// App picked from the open panel, waiting for domain selection.
     struct PendingApp: Identifiable {
@@ -22,6 +25,11 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+
+            if let warning = proxyStatus.warningText {
+                proxyBanner(warning)
+                Divider()
+            }
 
             if store.apps.isEmpty && !isScanning {
                 emptyState
@@ -51,6 +59,35 @@ struct ContentView: View {
         } message: {
             Text(store.errorMessage ?? "")
         }
+        .onAppear {
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+            refreshProxyStatus()
+        }
+        .onChange(of: store.apps) { _ in refreshProxyStatus() }
+    }
+
+    private func refreshProxyStatus() {
+        let sample = store.apps.filter(\.isBlocked).compactMap(\.domains.first)
+        DispatchQueue.global(qos: .utility).async {
+            let status = DNSProxyDetector.detect(blockedDomains: sample)
+            DispatchQueue.main.async { proxyStatus = status }
+        }
+    }
+
+    private func proxyBanner(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: proxyStatus.bypassed
+                  ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(proxyStatus.bypassed ? .red : .yellow)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background((proxyStatus.bypassed ? Color.red : Color.yellow).opacity(0.08))
     }
 
     private var errorBinding: Binding<Bool> {
@@ -116,15 +153,34 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack {
-            Text("Blocks via /etc/hosts")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            Toggle("Launch at login", isOn: $launchAtLogin)
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .font(.caption)
+                .onChange(of: launchAtLogin) { enable in
+                    setLaunchAtLogin(enable)
+                }
             Spacer()
             Button("Quit") { NSApp.terminate(nil) }
                 .controlSize(.small)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    private func setLaunchAtLogin(_ enable: Bool) {
+        let current = SMAppService.mainApp.status == .enabled
+        guard enable != current else { return }
+        do {
+            if enable {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            launchAtLogin = current
+            store.errorMessage = "Could not update login item: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Actions
