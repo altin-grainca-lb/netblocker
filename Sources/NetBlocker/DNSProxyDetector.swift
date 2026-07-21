@@ -5,12 +5,11 @@ struct DNSProxyStatus: Equatable {
     var bypassed: Bool = false          // a blocked domain still resolves publicly
 
     var warningText: String? {
-        if bypassed {
-            let who = proxies.isEmpty ? "A DNS proxy" : proxies.joined(separator: ", ")
-            return "\(who) is answering DNS without reading /etc/hosts — blocks are being bypassed. Add the domains to its denylist instead."
-        }
         if !proxies.isEmpty {
-            return "\(proxies.joined(separator: ", ")) detected — it may bypass /etc/hosts blocks."
+            return "Disable \(proxies.joined(separator: ", ")) to use NetBlocker."
+        }
+        if bypassed {
+            return "A DNS proxy is bypassing /etc/hosts — disable it to use NetBlocker."
         }
         return nil
     }
