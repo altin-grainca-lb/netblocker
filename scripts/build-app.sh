@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP=NetBlocker
-VERSION="${VERSION:-0.2.2}"
+VERSION="${VERSION:-0.2.3}"
 
 echo "==> swift build (release, universal)"
 if swift build -c release --arch arm64 --arch x86_64 2>/dev/null; then

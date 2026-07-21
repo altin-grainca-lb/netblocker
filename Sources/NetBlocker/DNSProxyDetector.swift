@@ -1,7 +1,7 @@
 import Foundation
 
 struct DNSProxyStatus: Equatable {
-    var proxies: [String] = []          // detected DNS-proxy products
+    var proxies: [String] = []          // active DNS-proxy products (best effort)
     var bypassed: Bool = false          // a blocked domain still resolves publicly
 
     var warningText: String? {
@@ -16,10 +16,14 @@ struct DNSProxyStatus: Equatable {
 }
 
 /// Detects DNS proxies/VPNs that resolve names upstream without consulting
-/// /etc/hosts (NextDNS, AdGuard, Cloudflare WARP, …). Two signals:
-/// 1. Known proxy processes in the process list.
-/// 2. The ground truth: a domain we have blocked still resolving to a real
-///    address means something is bypassing the hosts file.
+/// /etc/hosts (NextDNS, AdGuard, Cloudflare WARP, …).
+///
+/// The ground truth is the functional probe: if a domain we blocked still
+/// resolves to a real address, something is bypassing the hosts file. When
+/// domains are blocked, that probe alone decides — a proxy app that is
+/// merely installed (or running but disabled) must not trigger the banner.
+/// Only when nothing is blocked yet do we fall back to configuration
+/// signals: an active DNS-proxy resolver in `scutil --dns`.
 enum DNSProxyDetector {
 
     private static let knownProxies: [(pattern: String, name: String)] = [
@@ -37,24 +41,44 @@ enum DNSProxyDetector {
     /// null-routed (used for the functional bypass probe).
     static func detect(blockedDomains: [String]) -> DNSProxyStatus {
         var status = DNSProxyStatus()
-        status.proxies = runningProxies()
-        status.bypassed = blockedDomains.prefix(3).contains { resolvesPublicly($0) }
+
+        if !blockedDomains.isEmpty {
+            status.bypassed = blockedDomains.prefix(3).contains { resolvesPublicly($0) }
+            if status.bypassed {
+                status.proxies = namedRunningProxies()
+            }
+            // Hosts file demonstrably working -> stay silent.
+            return status
+        }
+
+        // Nothing blocked yet: warn only if a DNS proxy is actively
+        // registered in the system resolver configuration.
+        if hasActiveProxyResolver() {
+            status.proxies = namedRunningProxies()
+            status.bypassed = status.proxies.isEmpty // generic fallback message
+        }
         return status
     }
 
-    // MARK: - Signal 1: known proxy processes
+    // MARK: - Configuration signal (scutil --dns)
 
-    private static func runningProxies() -> [String] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "comm="]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        guard (try? process.run()) != nil else { return [] }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+    /// Network-extension DNS proxies register resolvers pointing at reserved
+    /// benchmark/documentation addresses (NextDNS uses 192.0.2.x, others use
+    /// 198.18.x.x). A normal setup never has nameservers there.
+    private static func hasActiveProxyResolver() -> Bool {
+        let output = run("/usr/sbin/scutil", ["--dns"])
+        for line in output.split(separator: "\n") where line.contains("nameserver") {
+            if line.contains(" 192.0.2.") || line.contains(" 198.18.") || line.contains(" 198.19.") {
+                return true
+            }
+        }
+        return false
+    }
 
-        let commands = String(decoding: data, as: UTF8.self)
+    // MARK: - Naming the culprit (process scan, best effort)
+
+    private static func namedRunningProxies() -> [String] {
+        let commands = run("/bin/ps", ["-axo", "comm="])
             .lowercased()
             .replacingOccurrences(of: "[^a-z0-9\n]", with: "", options: .regularExpression)
 
@@ -66,7 +90,19 @@ enum DNSProxyDetector {
         return found
     }
 
-    // MARK: - Signal 2: functional probe
+    private static func run(_ path: String, _ args: [String]) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = args
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        guard (try? process.run()) != nil else { return "" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // MARK: - Functional probe
 
     /// True when the domain resolves to a real (non-blackhole) address even
     /// though we blocked it. Resolution failures return false — offline or

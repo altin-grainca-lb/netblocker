@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP=NetBlocker
-VERSION="${VERSION:-0.2.2}"
+VERSION="${VERSION:-0.2.3}"
 DMG="dist/$APP-$VERSION.dmg"
 
 [[ -d "dist/$APP.app" ]] || { echo "run scripts/build-app.sh first"; exit 1; }
