@@ -64,10 +64,16 @@ extensions. The hosts file is the whole mechanism.
   chosen app. Blocking a shared service (analytics providers, license
   servers like LemonSqueezy, GitHub) affects other apps too — the domain
   list is fully in your control, so choose accordingly.
-- **DNS proxies bypass it.** If you run NextDNS, AdGuard, Cloudflare WARP or
-  similar as a DNS proxy/VPN, they resolve names upstream without consulting
-  `/etc/hosts`. NetBlocker detects this and warns you in the popover; add
-  the domains to that tool's own denylist instead.
+- **DNS proxies and network filters bypass it.** DNS proxies (NextDNS,
+  AdGuard), VPN MagicDNS, and corporate security network extensions
+  (Microsoft Defender for Endpoint, Zscaler, Cisco Umbrella) resolve names
+  through their own path and ignore `/etc/hosts` for any domain that exists
+  in public DNS. NetBlocker functionally probes your blocked domains and, if
+  a block isn't taking effect, shows a banner naming the likely active
+  filter. On MDM-managed machines these filters usually **cannot be
+  disabled**, so `/etc/hosts` blocking won't work for live domains there —
+  that needs a real content-filter firewall with the Network Extension
+  entitlement, which your IT controls.
 - **Determined apps can evade it.** Hardcoded IPs or an app doing its own
   DNS-over-HTTPS won't be stopped by hosts entries. For that you need a real
   content-filter firewall ([LuLu](https://objective-see.org/products/lulu.html),

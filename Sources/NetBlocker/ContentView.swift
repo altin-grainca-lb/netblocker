@@ -42,7 +42,7 @@ struct ContentView: View {
     }
 
     private func refreshProxyStatus() {
-        let sample = store.apps.filter(\.isBlocked).compactMap(\.domains.first)
+        let sample = store.apps.filter(\.isBlocked).flatMap(\.domains)
         DispatchQueue.global(qos: .utility).async {
             let status = DNSProxyDetector.detect(blockedDomains: sample)
             DispatchQueue.main.async { proxyStatus = status }

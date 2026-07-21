@@ -1,91 +1,74 @@
 import Foundation
 
 struct DNSProxyStatus: Equatable {
-    var proxies: [String] = []          // active DNS-proxy products (best effort)
     var bypassed: Bool = false          // a blocked domain still resolves publicly
+    var interceptors: [String] = []     // active network filters likely responsible
 
     var warningText: String? {
-        if !proxies.isEmpty {
-            return "Disable \(proxies.joined(separator: ", ")) to use NetBlocker."
+        guard bypassed else { return nil }
+        var msg = "Blocking isn’t taking effect — something on this Mac is resolving DNS and ignoring /etc/hosts."
+        if !interceptors.isEmpty {
+            msg += " Likely: \(interceptors.joined(separator: ", "))."
         }
-        if bypassed {
-            return "A DNS proxy is bypassing /etc/hosts — disable it to use NetBlocker."
-        }
-        return nil
+        return msg
     }
 }
 
-/// Detects DNS proxies/VPNs that resolve names upstream without consulting
-/// /etc/hosts (NextDNS, AdGuard, Cloudflare WARP, …).
+/// Decides whether NetBlocker's /etc/hosts blocks are actually working.
 ///
-/// The ground truth is the functional probe: if a domain we blocked still
-/// resolves to a real address, something is bypassing the hosts file. When
-/// domains are blocked, that probe alone decides — a proxy app that is
-/// merely installed (or running but disabled) must not trigger the banner.
-/// Only when nothing is blocked yet do we fall back to configuration
-/// signals: an active DNS-proxy resolver in `scutil --dns`.
+/// The authoritative signal is a functional probe: if a domain we blocked
+/// still resolves to a real (non-blackhole) address, some resolver is
+/// bypassing /etc/hosts — DNS proxies (NextDNS, AdGuard), VPN MagicDNS, or
+/// corporate network filters (Microsoft Defender, Zscaler, GlobalProtect)
+/// all do this. A previous version blamed NextDNS purely because its process
+/// was running, which was wrong when NextDNS was disabled; process presence
+/// is no longer used. We only *name* a likely culprit from the list of
+/// active network-filter system extensions, and only as a hint.
 enum DNSProxyDetector {
 
-    private static let knownProxies: [(pattern: String, name: String)] = [
-        ("nextdns", "NextDNS"),
-        ("adguard", "AdGuard"),
-        ("dnscrypt", "dnscrypt-proxy"),
-        ("cloudflarewarp", "Cloudflare WARP"),
-        ("warpsvc", "Cloudflare WARP"),
-        ("mullvad", "Mullvad VPN"),
-        ("protonvpn", "Proton VPN"),
-        ("zscaler", "Zscaler"),
-    ]
-
-    /// `blockedDomains`: a sample of domains that should currently be
-    /// null-routed (used for the functional bypass probe).
+    /// `blockedDomains`: domains that should currently be null-routed.
+    /// Pass several (not just one per app) so a mix of live and dead domains
+    /// still surfaces a bypass.
     static func detect(blockedDomains: [String]) -> DNSProxyStatus {
         var status = DNSProxyStatus()
+        guard !blockedDomains.isEmpty else { return status }
 
-        if !blockedDomains.isEmpty {
-            status.bypassed = blockedDomains.prefix(3).contains { resolvesPublicly($0) }
-            if status.bypassed {
-                status.proxies = namedRunningProxies()
-            }
-            // Hosts file demonstrably working -> stay silent.
-            return status
-        }
-
-        // Nothing blocked yet: warn only if a DNS proxy is actively
-        // registered in the system resolver configuration.
-        if hasActiveProxyResolver() {
-            status.proxies = namedRunningProxies()
-            status.bypassed = status.proxies.isEmpty // generic fallback message
+        status.bypassed = blockedDomains.prefix(8).contains { resolvesPublicly($0) }
+        if status.bypassed {
+            status.interceptors = activeNetworkFilters()
         }
         return status
     }
 
-    // MARK: - Configuration signal (scutil --dns)
+    // MARK: - Naming the likely culprit (active network extensions)
 
-    /// Network-extension DNS proxies register resolvers pointing at reserved
-    /// benchmark/documentation addresses (NextDNS uses 192.0.2.x, others use
-    /// 198.18.x.x). A normal setup never has nameservers there.
-    private static func hasActiveProxyResolver() -> Bool {
-        let output = run("/usr/sbin/scutil", ["--dns"])
-        for line in output.split(separator: "\n") where line.contains("nameserver") {
-            if line.contains(" 192.0.2.") || line.contains(" 198.18.") || line.contains(" 198.19.") {
-                return true
-            }
-        }
-        return false
-    }
+    /// Human names of enabled, active network-extension filters — the things
+    /// that genuinely sit below /etc/hosts. Read from `systemextensionsctl`
+    /// (no privileges needed). Idle-but-loaded extensions may appear; this is
+    /// only a hint shown alongside the authoritative probe result.
+    private static func activeNetworkFilters() -> [String] {
+        let vendors: [(needle: String, name: String)] = [
+            ("wdav", "Microsoft Defender"),
+            ("zscaler", "Zscaler"),
+            ("globalprotect", "GlobalProtect"),
+            ("paloaltonetworks", "GlobalProtect"),
+            ("cisco.anyconnect", "Cisco AnyConnect"),
+            ("umbrella", "Cisco Umbrella"),
+            ("nextdns", "NextDNS"),
+            ("adguard", "AdGuard"),
+            ("tailscale", "Tailscale"),
+            ("littlesnitch", "Little Snitch"),
+        ]
 
-    // MARK: - Naming the culprit (process scan, best effort)
-
-    private static func namedRunningProxies() -> [String] {
-        let commands = run("/bin/ps", ["-axo", "comm="])
-            .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9\n]", with: "", options: .regularExpression)
-
+        let output = run("/usr/bin/systemextensionsctl", ["list"]).lowercased()
         var found: [String] = []
-        for (pattern, name) in knownProxies
-        where commands.contains(pattern) && !found.contains(name) {
-            found.append(name)
+        for line in output.split(separator: "\n") {
+            // Only lines describing an activated/enabled extension.
+            guard line.contains("activated"), line.contains("enabled") else { continue }
+            for vendor in vendors
+            where line.contains(vendor.needle) && !found.contains(vendor.name) {
+                found.append(vendor.name)
+            }
         }
         return found
     }
@@ -96,6 +79,7 @@ enum DNSProxyDetector {
         process.arguments = args
         let pipe = Pipe()
         process.standardOutput = pipe
+        process.standardError = Pipe()
         guard (try? process.run()) != nil else { return "" }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
@@ -106,8 +90,7 @@ enum DNSProxyDetector {
 
     /// True when the domain resolves to a real (non-blackhole) address even
     /// though we blocked it. Resolution failures return false — offline or
-    /// NXDOMAIN both mean the app can't reach the host, which is what the
-    /// user wanted.
+    /// NXDOMAIN both mean the app can't reach the host, which is the goal.
     private static func resolvesPublicly(_ domain: String) -> Bool {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
