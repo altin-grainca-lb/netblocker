@@ -26,15 +26,14 @@ enum AppScanner {
             extractDomains(from: file, into: &counts)
         }
 
-        let appTokens = nameTokens(from: bundleURL)
         return counts
             .filter { !isNoise($0.key) }
             .map { domain, count in
-                DomainHit(domain: domain, count: count,
-                          selected: matchesApp(domain: domain, tokens: appTokens))
+                // New apps start with every domain selected; the user toggles
+                // off any they want to leave reachable.
+                DomainHit(domain: domain, count: count, selected: true)
             }
             .sorted {
-                if $0.selected != $1.selected { return $0.selected }
                 if $0.count != $1.count { return $0.count > $1.count }
                 return $0.domain < $1.domain
             }
@@ -105,20 +104,5 @@ enum AppScanner {
 
     private static func isNoise(_ domain: String) -> Bool {
         noiseSuffixes.contains { domain == $0 || domain.hasSuffix("." + $0) }
-    }
-
-    // MARK: - Preselection heuristic
-
-    private static func nameTokens(from bundleURL: URL) -> [String] {
-        bundleURL.deletingPathExtension().lastPathComponent
-            .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count >= 4 }
-    }
-
-    /// Preselect domains that look like the app's own (contain a token of the
-    /// app's name, e.g. "Screen Studio" -> screen.studio, api.screen.studio).
-    private static func matchesApp(domain: String, tokens: [String]) -> Bool {
-        tokens.contains { domain.contains($0) }
     }
 }

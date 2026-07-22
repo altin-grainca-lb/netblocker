@@ -64,9 +64,15 @@ enum HostsManager {
         try newContent.write(to: tmp, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
+        // chown/chmod: a hosts file that isn't root:wheel 644 is unreadable to
+        // mDNSResponder, which then silently ignores every entry system-wide.
+        // killall (not -HUP, which only dumps state): mDNSResponder re-reads
+        // /etc/hosts on restart; launchd respawns it immediately.
         let shell = "/bin/cp '\(tmp.path)' /etc/hosts"
+            + " && /usr/sbin/chown root:wheel /etc/hosts"
+            + " && /bin/chmod 644 /etc/hosts"
             + " && /usr/bin/dscacheutil -flushcache"
-            + " && (/usr/bin/killall -HUP mDNSResponder || true)"
+            + " && (/usr/bin/killall mDNSResponder || true)"
         let script = "do shell script \"\(shell.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
             + " with administrator privileges"
             + " with prompt \"NetBlocker wants to update /etc/hosts.\""
